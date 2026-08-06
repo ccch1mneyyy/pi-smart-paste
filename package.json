@@ -1,0 +1,23 @@
+{
+  "name": "pi-smart-paste",
+  "version": "1.0.0",
+  "description": "Smart clipboard paste for pi on Windows — copy files and paste their paths; falls back to images.",
+  "keywords": ["pi-package", "pi", "clipboard", "paste", "windows", "powershell", "file-paths"],
+  "license": "MIT",
+  "author": "chimney",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ccch1mneyyy/pi-smart-paste.git"
+  },
+  "homepage": "https://github.com/ccch1mneyyy/pi-smart-paste",
+  "bugs": {
+    "url": "https://github.com/ccch1mneyyy/pi-smart-paste/issues"
+  },
+  "files": ["extensions", "README.md", "LICENSE"],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
