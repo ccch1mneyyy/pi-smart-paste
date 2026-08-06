@@ -22,6 +22,16 @@ pi 内置的粘贴只处理**图片**。当你在资源管理器里复制一个*
 | 图片（截图 / 复制图片） | 保存为临时 png 并粘贴路径 |
 | 都没有 | 提示用户 |
 
+### 效果
+
+**粘贴文件** → 直接得到文件路径（核心卖点）：
+
+![粘贴文件](docs/paste-file.png)
+
+**粘贴图片** → 得到临时图片路径：
+
+![粘贴图片](docs/paste-image.png)
+
 ### 安装
 
 ```bash
@@ -78,6 +88,16 @@ pi's built-in paste only handles **images**. A copied **file** sits on the clipb
 | Copied file(s) | Absolute file path(s), one per line |
 | Image (screenshot / copy) | Saved to temp png, path pasted |
 | Neither | User is notified |
+
+### Screenshots
+
+**Paste a file** → get its path (the headline feature):
+
+![paste file](docs/paste-file.png)
+
+**Paste an image** → get the temp image path:
+
+![paste image](docs/paste-image.png)
 
 ### Install
 
