@@ -8,7 +8,8 @@
  *
  *   1. Copied FILES -> paste their absolute paths (one per line)
  *   2. Copied IMAGE -> save to a temp png and paste the path (built-in parity)
- *   3. Anything else -> notify the user
+ *   3. Copied TEXT  -> paste the text silently (do NOT hijack normal pasting!)
+ *   4. Empty        -> notify the user
  *
  * Commands:  /paste (smart)  /paste-file (files only)  /paste-image (image only)
  * Shortcuts: ctrl+v / ctrl+shift+v / alt+v (smart)   ctrl+shift+i (image only)
@@ -29,13 +30,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 type UICtx = {
 	ui: {
 		pasteToEditor: (t: string) => void;
-		notify: (msg: string, level?: "info" | "warning" | "error") => void;
+			notify: (msg: string, level?: "info" | "warning" | "error") => void;
 	};
 };
 
 type Probe =
 	| { kind: "files"; files: string[] }
 	| { kind: "image"; imagePath: string }
+	| { kind: "text"; text: string }
 	| { kind: "empty" };
 
 /** Run a PowerShell snippet in STA mode (required for Clipboard APIs). */
@@ -72,12 +74,13 @@ function runPowerShellSta(script: string, timeoutMs = 8000): Promise<string> {
 }
 
 /**
- * Probe the clipboard once: file-drop list first, then image.
- * Output encoding is forced to UTF-8 so non-ASCII paths survive.
+ * Probe the clipboard once: file-drop list first, then image, then text.
+ * Text is returned base64-encoded on its own line so newlines can't corrupt the
+ * tag framing. Output encoding is forced to UTF-8 so non-ASCII paths survive.
  */
 async function probeClipboard(): Promise<Probe> {
 	const imagePath = join(tmpdir(), `pi-clip-${randomUUID()}.png`);
-	const psQuoted = imagePath.replaceAll("'", "''");
+	const psImg = imagePath.replaceAll("'", "''");
 	const script = [
 		"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
 		"Add-Type -AssemblyName System.Windows.Forms",
@@ -89,11 +92,18 @@ async function probeClipboard(): Promise<Probe> {
 		"} else {",
 		"  $img = [System.Windows.Forms.Clipboard]::GetImage()",
 		"  if ($img) {",
-		`    $img.Save('${psQuoted}', [System.Drawing.Imaging.ImageFormat]::Png)`,
+		`    $img.Save('${psImg}', [System.Drawing.Imaging.ImageFormat]::Png)`,
 		"    Write-Output 'IMAGE'",
-		`    Write-Output '${psQuoted}'`,
+		`    Write-Output '${psImg}'`,
 		"  } else {",
-		"    Write-Output 'EMPTY'",
+		"    $txt = [System.Windows.Forms.Clipboard]::GetText()",
+		"    if ($txt) {",
+		"      $b64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($txt))",
+		"      Write-Output 'TEXT'",
+		"      Write-Output $b64",
+		"    } else {",
+		"      Write-Output 'EMPTY'",
+		"    }",
 		"  }",
 		"}",
 	].join("\n");
@@ -118,14 +128,19 @@ async function probeClipboard(): Promise<Probe> {
 			/* fall through */
 		}
 	}
+	if (tag === "TEXT") {
+		try {
+			const text = Buffer.from(lines[1] ?? "", "base64").toString("utf8");
+			if (text) return { kind: "text", text };
+		} catch {
+			/* fall through */
+		}
+	}
 	return { kind: "empty" };
 }
 
 function notifyEmpty(ctx: UICtx) {
-	ctx.ui.notify(
-		"Clipboard has no files or images. Copy a file or screenshot first, then use /paste or Ctrl+V.",
-		"warning",
-	);
+	ctx.ui.notify("Clipboard is empty. Copy a file, screenshot, or text first.", "warning");
 }
 
 async function smartPaste(ctx: UICtx) {
@@ -140,13 +155,18 @@ async function smartPaste(ctx: UICtx) {
 		ctx.ui.notify(`Pasted image: ${probe.imagePath}`, "info");
 		return;
 	}
+	if (probe.kind === "text") {
+		// Plain text: paste silently. Normal pasting must NOT show a notification.
+		ctx.ui.pasteToEditor(probe.text);
+		return;
+	}
 	notifyEmpty(ctx);
 }
 
 async function pasteFiles(ctx: UICtx) {
 	const probe = await probeClipboard();
 	if (probe.kind !== "files") {
-		notifyEmpty(ctx);
+		ctx.ui.notify("Clipboard has no files. Copy a file first, then use /paste-file.", "warning");
 		return;
 	}
 	ctx.ui.pasteToEditor(probe.files.join("\n"));
@@ -162,7 +182,7 @@ async function pasteImage(ctx: UICtx) {
 		return;
 	}
 	if (probe.kind !== "image") {
-		notifyEmpty(ctx);
+		ctx.ui.notify("Clipboard has no image. Copy an image first, then use /paste-image.", "warning");
 		return;
 	}
 	ctx.ui.pasteToEditor(probe.imagePath);
@@ -171,7 +191,7 @@ async function pasteImage(ctx: UICtx) {
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("paste", {
-		description: "Smart paste: file paths if files copied, else image",
+		description: "Smart paste: file paths if files copied, else image, else text",
 		handler: async (_args, ctx) => {
 			await smartPaste(ctx);
 		},
@@ -192,22 +212,22 @@ export default function (pi: ExtensionAPI) {
 	// Smart paste (content-aware). Ctrl+V is the primary chord — it was already
 	// bound to the built-in pasteImage in the user's keybindings, so pi receives
 	// it as a keypress here. Intercept it to paste file paths when files are
-	// copied, falling back to image paste.
+	// copied, falling back to image, then plain text (silent).
 	pi.registerShortcut("ctrl+v", {
-		description: "Smart paste (file paths / image) — takes over Ctrl+V",
+		description: "Smart paste (file paths / image / text) — takes over Ctrl+V",
 		handler: async (ctx) => {
 			await smartPaste(ctx);
 		},
 	});
 	pi.registerShortcut("ctrl+shift+v", {
-		description: "Smart paste (file paths / image), alternate",
+		description: "Smart paste (file paths / image / text), alternate",
 		handler: async (ctx) => {
 			await smartPaste(ctx);
 		},
 	});
 	// Alt+V: take over from built-in image paste for smart paste.
 	pi.registerShortcut("alt+v", {
-		description: "Smart paste (file paths / image) — takes over Alt+V",
+		description: "Smart paste (file paths / image / text) — takes over Alt+V",
 		handler: async (ctx) => {
 			await smartPaste(ctx);
 		},
